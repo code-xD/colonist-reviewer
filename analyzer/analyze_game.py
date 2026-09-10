@@ -529,7 +529,9 @@ def main() -> None:
                 video.resolve(), temporary_path / f"part-{index:02d}", args.sample_every
             )
             all_frames.extend(score_frames(paths, offset, args.sample_every))
-            offset += probe_duration(video.resolve())
+            # MediaRecorder WebM files may omit container duration metadata. The
+            # sampled frame count still gives a stable offset for the next part.
+            offset += len(paths) * args.sample_every
 
         if not all_frames:
             fail("ffmpeg extracted no frames from the supplied video(s)")
