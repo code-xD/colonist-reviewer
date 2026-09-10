@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import os
 import re
 import shutil
@@ -378,6 +379,112 @@ def select_frames(frames: list[Frame], maximum: int, coverage_seconds: float = 4
     return sorted(selected.values(), key=lambda frame: frame.timestamp_seconds)
 
 
+def canonical_topology() -> tuple[list[tuple[float, float]], list[tuple[float, float]], list[tuple[int, int]]]:
+    row_lengths = [3, 4, 5, 4, 3]
+    centers: list[tuple[float, float]] = []
+    for row, length in enumerate(row_lengths):
+        offset = abs(2 - row) * 0.5
+        for column in range(length):
+            centers.append(((offset + column) * 3**0.5, row * 1.5))
+
+    corner_lookup: dict[tuple[float, float], int] = {}
+    edges: set[tuple[int, int]] = set()
+    for center_x, center_y in centers:
+        tile_corners: list[int] = []
+        for corner in range(6):
+            angle = (60 * corner - 30) * 3.141592653589793 / 180
+            point = (round(center_x + math.cos(angle), 4), round(center_y + math.sin(angle), 4))
+            if point not in corner_lookup:
+                corner_lookup[point] = len(corner_lookup)
+            tile_corners.append(corner_lookup[point])
+        for corner in range(6):
+            edges.add(tuple(sorted((tile_corners[corner], tile_corners[(corner + 1) % 6]))))
+
+    ordered_corners = sorted(corner_lookup, key=lambda point: (point[1], point[0]))
+    corner_remap = {corner_lookup[point]: index for index, point in enumerate(ordered_corners)}
+    ordered_edges = sorted(
+        ((corner_remap[start], corner_remap[end]) for start, end in edges),
+        key=lambda edge: (
+            (ordered_corners[edge[0]][1] + ordered_corners[edge[1]][1]) / 2,
+            (ordered_corners[edge[0]][0] + ordered_corners[edge[1]][0]) / 2,
+        ),
+    )
+    return centers, ordered_corners, ordered_edges
+
+
+def canonicalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    tiles = snapshot.get("tiles", [])
+    if len(tiles) != 19:
+        return None
+
+    row_lengths = [3, 4, 5, 4, 3]
+    ordered_tiles: list[dict[str, Any]] = []
+    by_y = sorted(tiles, key=lambda tile: (tile["y"], tile["x"]))
+    position = 0
+    for length in row_lengths:
+        ordered_tiles.extend(sorted(by_y[position : position + length], key=lambda tile: tile["x"]))
+        position += length
+
+    centers, corners, edges = canonical_topology()
+    observed_x = [tile["x"] for tile in ordered_tiles]
+    observed_y = [tile["y"] for tile in ordered_tiles]
+    canonical_x = [point[0] for point in centers]
+    canonical_y = [point[1] for point in centers]
+
+    def transform(x: float, y: float) -> tuple[float, float]:
+        mapped_x = min(canonical_x) + (x - min(observed_x)) * (max(canonical_x) - min(canonical_x)) / (max(observed_x) - min(observed_x))
+        mapped_y = min(canonical_y) + (y - min(observed_y)) * (max(canonical_y) - min(canonical_y)) / (max(observed_y) - min(observed_y))
+        return mapped_x, mapped_y
+
+    def nearest_index(point: tuple[float, float], candidates: list[tuple[float, float]]) -> int:
+        return min(range(len(candidates)), key=lambda index: (candidates[index][0] - point[0]) ** 2 + (candidates[index][1] - point[1]) ** 2)
+
+    edge_midpoints = [
+        ((corners[start][0] + corners[end][0]) / 2, (corners[start][1] + corners[end][1]) / 2)
+        for start, end in edges
+    ]
+    buildings = [
+        {
+            "corner_index": nearest_index(transform(building["x"], building["y"]), corners),
+            "owner": building["owner"],
+            "color": building["color"],
+            "kind": building["kind"],
+        }
+        for building in snapshot.get("buildings", [])
+    ]
+    roads = [
+        {
+            "edge_index": nearest_index(
+                transform(
+                    (road["start_x"] + road["end_x"]) / 2,
+                    (road["start_y"] + road["end_y"]) / 2,
+                ),
+                edge_midpoints,
+            ),
+            "owner": road["owner"],
+            "color": road["color"],
+        }
+        for road in snapshot.get("roads", [])
+    ]
+    robber_tile_index = None
+    if snapshot.get("robber_x") is not None and snapshot.get("robber_y") is not None:
+        robber_tile_index = nearest_index(transform(snapshot["robber_x"], snapshot["robber_y"]), centers)
+
+    return {
+        "timestamp_seconds": snapshot["timestamp_seconds"],
+        "active_player": snapshot["active_player"],
+        "players": snapshot["players"],
+        "tiles": [
+            {"tile_index": index, "resource": tile["resource"], "dice_number": tile["dice_number"]}
+            for index, tile in enumerate(ordered_tiles)
+        ],
+        "buildings": buildings,
+        "roads": roads,
+        "robber_tile_index": robber_tile_index,
+        "confidence": snapshot["confidence"],
+    }
+
+
 def batched(items: list[Frame], size: int) -> Iterable[list[Frame]]:
     for index in range(0, len(items), size):
         yield items[index : index + size]
@@ -682,7 +789,7 @@ def main() -> None:
             player=args.player,
         )
         output = {
-            "schema_version": "1.1",
+            "schema_version": "1.2",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source_videos": [str(video.resolve()) for video in args.videos],
             "model": args.model,
@@ -690,12 +797,16 @@ def main() -> None:
             "sample_every_seconds": args.sample_every,
             "sampled_frame_count": len(all_frames),
             "analyzed_frame_count": len(selected),
+            "board_topology": "hex19-row-major-v1",
             "board_snapshots": sorted(
-                [
-                    snapshot
-                    for batch in batch_results
-                    for snapshot in batch.get("board_snapshots", [])
-                ],
+                filter(
+                    None,
+                    (
+                        canonicalize_snapshot(snapshot)
+                        for batch in batch_results
+                        for snapshot in batch.get("board_snapshots", [])
+                    ),
+                ),
                 key=lambda snapshot: snapshot["timestamp_seconds"],
             ),
             "review": report,

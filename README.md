@@ -62,3 +62,11 @@ The [frontend](frontend/README.md) is a local-first replay workspace for this
 repository's analyzer JSON. It presents timestamped observations, decision
 assessments, suggested alternatives, and visual board snapshots when the report
 contains them. The report is read inside the browser and is not uploaded.
+
+It is self-contained and can be started independently:
+
+```sh
+cd frontend
+npm install
+npm run dev
+```

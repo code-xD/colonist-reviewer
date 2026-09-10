@@ -23,30 +23,70 @@ const resourceClass = (resource: string) => {
   return "desert";
 };
 
+const boardTopology = (() => {
+  const rowLengths = [3, 4, 5, 4, 3];
+  const rawCenters = rowLengths.flatMap((length, row) => Array.from({ length }, (_, column) => ({ x: (Math.abs(2 - row) * .5 + column) * Math.sqrt(3), y: row * 1.5 })));
+  const rawCorners: { x: number; y: number }[] = [];
+  const cornerIds = new Map<string, number>();
+  const rawEdges = new Set<string>();
+  for (const center of rawCenters) {
+    const tileCorners = Array.from({ length: 6 }, (_, index) => {
+      const angle = ((60 * index - 30) * Math.PI) / 180;
+      const point = { x: Number((center.x + Math.cos(angle)).toFixed(4)), y: Number((center.y + Math.sin(angle)).toFixed(4)) };
+      const key = `${point.x.toFixed(4)}:${point.y.toFixed(4)}`;
+      if (!cornerIds.has(key)) {
+        cornerIds.set(key, rawCorners.length);
+        rawCorners.push(point);
+      }
+      return cornerIds.get(key)!;
+    });
+    for (let index = 0; index < 6; index += 1) {
+      rawEdges.add([tileCorners[index], tileCorners[(index + 1) % 6]].sort((a, b) => a - b).join(":"));
+    }
+  }
+  const corners = rawCorners.map((point, rawIndex) => ({ ...point, rawIndex })).sort((a, b) => a.y - b.y || a.x - b.x);
+  const remap = new Map(corners.map((corner, index) => [corner.rawIndex, index]));
+  const edges = [...rawEdges].map((value) => value.split(":").map(Number)).map(([start, end]) => [remap.get(start)!, remap.get(end)!] as const).sort((a, b) => {
+    const midpointA = { x: (corners[a[0]].x + corners[a[1]].x) / 2, y: (corners[a[0]].y + corners[a[1]].y) / 2 };
+    const midpointB = { x: (corners[b[0]].x + corners[b[1]].x) / 2, y: (corners[b[0]].y + corners[b[1]].y) / 2 };
+    return midpointA.y - midpointB.y || midpointA.x - midpointB.x;
+  });
+  const project = (point: { x: number; y: number }) => ({ x: 380 + (point.x - 2 * Math.sqrt(3)) * 58, y: 260 + (point.y - 3) * 58 });
+  return { centers: rawCenters.map(project), corners: corners.map(project), edges };
+})();
+
 function VisualBoard({ snapshot }: { snapshot: VisualSnapshot }) {
   return (
     <svg className="board" viewBox="0 0 760 520" role="img" aria-label={`Board evidence at ${formatTime(snapshot.timestamp_seconds)}`}>
       <defs><filter id="tile-shadow"><feDropShadow dx="0" dy="5" stdDeviation="5" floodOpacity=".25" /></filter></defs>
       <g filter="url(#tile-shadow)">
         {snapshot.tiles.map((tile, index) => {
-          const x = tile.x * 760;
-          const y = tile.y * 520;
+          const center = boardTopology.centers[tile.tile_index];
+          if (!center) return null;
+          const { x, y } = center;
           const points = Array.from({ length: 6 }, (_, point) => {
             const angle = ((60 * point - 30) * Math.PI) / 180;
-            return `${x + 42 * Math.cos(angle)},${y + 42 * Math.sin(angle)}`;
+            return `${x + 58 * Math.cos(angle)},${y + 58 * Math.sin(angle)}`;
           }).join(" ");
-          return <g key={`${tile.x}:${tile.y}:${index}`}><polygon className={`tile tile-${resourceClass(tile.resource)}`} points={points} />{tile.dice_number ? <g><circle className="number-chip" cx={x} cy={y} r="15" /><text className={tile.dice_number === 6 || tile.dice_number === 8 ? "hot-number" : "tile-number"} x={x} y={y + 5}>{tile.dice_number}</text></g> : null}</g>;
+          return <g key={`${tile.tile_index}:${index}`}><polygon className={`tile tile-${resourceClass(tile.resource)}`} points={points} />{tile.dice_number ? <g><circle className="number-chip" cx={x} cy={y} r="15" /><text className={tile.dice_number === 6 || tile.dice_number === 8 ? "hot-number" : "tile-number"} x={x} y={y + 5}>{tile.dice_number}</text></g> : null}</g>;
         })}
       </g>
-      {snapshot.roads.map((road, index) => <line key={index} className={`road player-${safeColor(road.color)}`} x1={road.start_x * 760} y1={road.start_y * 520} x2={road.end_x * 760} y2={road.end_y * 520} />)}
+      {snapshot.roads.map((road, index) => {
+        const edge = boardTopology.edges[road.edge_index];
+        if (!edge) return null;
+        const start = boardTopology.corners[edge[0]];
+        const end = boardTopology.corners[edge[1]];
+        return <line key={index} className={`road player-${safeColor(road.color)}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />;
+      })}
       {snapshot.buildings.map((building, index) => {
-        const x = building.x * 760;
-        const y = building.y * 520;
+        const point = boardTopology.corners[building.corner_index];
+        if (!point) return null;
+        const { x, y } = point;
         return building.kind === "city"
           ? <path key={index} className={`building player-${safeColor(building.color)}`} d={`M${x - 10} ${y + 8}v-16l7-7 7 7v5h8v19z`} />
           : <path key={index} className={`building player-${safeColor(building.color)}`} d={`M${x - 9} ${y + 8}v-12l9-8 9 8v12z`} />;
       })}
-      {snapshot.robber_x !== null && snapshot.robber_y !== null ? <g className="robber" transform={`translate(${snapshot.robber_x * 760 - 8} ${snapshot.robber_y * 520 - 21})`}><circle cx="8" cy="7" r="7" /><path d="M3 14h10l4 22H-1z" /></g> : null}
+      {snapshot.robber_tile_index !== null && boardTopology.centers[snapshot.robber_tile_index] ? <g className="robber" transform={`translate(${boardTopology.centers[snapshot.robber_tile_index].x - 8} ${boardTopology.centers[snapshot.robber_tile_index].y - 21})`}><circle cx="8" cy="7" r="7" /><path d="M3 14h10l4 22H-1z" /></g> : null}
     </svg>
   );
 }
@@ -71,19 +111,35 @@ export default function Home() {
     return review.snapshots.reduce((nearest, candidate) => Math.abs(candidate.timestamp_seconds - (moment.time ?? 0)) < Math.abs(nearest.timestamp_seconds - (moment.time ?? 0)) ? candidate : nearest);
   }, [moment, review]);
 
+  const applyReport = (data: unknown, name: string) => {
+    const parsed = parseAnalyzer(data);
+    setReview(parsed);
+    setIndex(0);
+    setNotice(`${parsed.moments.length} review moments and ${parsed.snapshots.length} board snapshots loaded from ${name}.`);
+  };
+
   const loadJson = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const parsed = parseAnalyzer(JSON.parse(await file.text()));
-      setReview(parsed);
-      setIndex(0);
-      setNotice(`${parsed.moments.length} review moments and ${parsed.snapshots.length} board snapshots loaded from ${file.name}.`);
+      applyReport(JSON.parse(await file.text()), file.name);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "The selected report could not be read.");
     }
     event.target.value = "";
   };
+
+  useEffect(() => {
+    const report = new URLSearchParams(window.location.search).get("report");
+    if (!report?.startsWith("/")) return;
+    fetch(report)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Could not load ${report}.`);
+        return response.json();
+      })
+      .then((data) => applyReport(data, report.split("/").at(-1) || report))
+      .catch((error: unknown) => setNotice(error instanceof Error ? error.message : `Could not load ${report}.`));
+  }, []);
 
   useEffect(() => {
     const move = (event: KeyboardEvent) => {

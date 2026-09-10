@@ -14,25 +14,20 @@ export type VisualPlayer = {
 };
 
 export type VisualTile = {
-  x: number;
-  y: number;
+  tile_index: number;
   resource: string;
   dice_number: number | null;
 };
 
 export type VisualBuilding = {
-  x: number;
-  y: number;
+  corner_index: number;
   owner: string;
   color: string;
   kind: "settlement" | "city";
 };
 
 export type VisualRoad = {
-  start_x: number;
-  start_y: number;
-  end_x: number;
-  end_y: number;
+  edge_index: number;
   owner: string;
   color: string;
 };
@@ -44,8 +39,7 @@ export type VisualSnapshot = {
   tiles: VisualTile[];
   buildings: VisualBuilding[];
   roads: VisualRoad[];
-  robber_x: number | null;
-  robber_y: number | null;
+  robber_tile_index: number | null;
   confidence: number;
 };
 
