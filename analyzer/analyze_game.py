@@ -441,10 +441,17 @@ def canonicalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     def nearest_index(point: tuple[float, float], candidates: list[tuple[float, float]]) -> int:
         return min(range(len(candidates)), key=lambda index: (candidates[index][0] - point[0]) ** 2 + (candidates[index][1] - point[1]) ** 2)
 
-    edge_midpoints = [
-        ((corners[start][0] + corners[end][0]) / 2, (corners[start][1] + corners[end][1]) / 2)
-        for start, end in edges
-    ]
+    def squared_distance(first: tuple[float, float], second: tuple[float, float]) -> float:
+        return (first[0] - second[0]) ** 2 + (first[1] - second[1]) ** 2
+
+    def nearest_edge_index(start: tuple[float, float], end: tuple[float, float]) -> int:
+        def score(edge: tuple[int, int]) -> float:
+            first, second = corners[edge[0]], corners[edge[1]]
+            forward = squared_distance(first, start) + squared_distance(second, end)
+            reverse = squared_distance(first, end) + squared_distance(second, start)
+            return min(forward, reverse)
+
+        return min(range(len(edges)), key=lambda index: score(edges[index]))
     buildings = [
         {
             "corner_index": nearest_index(transform(building["x"], building["y"]), corners),
@@ -456,12 +463,9 @@ def canonicalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     ]
     roads = [
         {
-            "edge_index": nearest_index(
-                transform(
-                    (road["start_x"] + road["end_x"]) / 2,
-                    (road["start_y"] + road["end_y"]) / 2,
-                ),
-                edge_midpoints,
+            "edge_index": nearest_edge_index(
+                transform(road["start_x"], road["start_y"]),
+                transform(road["end_x"], road["end_y"]),
             ),
             "owner": road["owner"],
             "color": road["color"],
@@ -572,26 +576,77 @@ def stabilize_snapshots(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]
         for index in range(54)
     }
 
+    _, _, topology_edges = canonical_topology()
     known_roads: dict[int, dict[str, Any]] = {}
     known_buildings: dict[int, dict[str, Any]] = {}
     stabilized: list[dict[str, Any]] = []
-    for snapshot in snapshots:
-        for road in snapshot["roads"]:
-            owner = road_owners[road["edge_index"]] or normalized_name(road["owner"])
-            known_roads[road["edge_index"]] = {
-                **road,
-                "owner": owner,
-                "color": player_colors.get(owner) or road["color"],
+    for snapshot_index, snapshot in enumerate(snapshots):
+        confirmation_window = snapshots[snapshot_index : snapshot_index + 4]
+        building_support = Counter(
+            candidate
+            for candidate_snapshot in confirmation_window
+            for candidate in {
+                (building["corner_index"], normalized_name(building["owner"]))
+                for building in candidate_snapshot["buildings"]
             }
+        )
+        road_support = Counter(
+            candidate
+            for candidate_snapshot in confirmation_window
+            for candidate in {
+                (road["edge_index"], normalized_name(road["owner"]))
+                for road in candidate_snapshot["roads"]
+            }
+        )
+
         for building in snapshot["buildings"]:
-            owner = building_owners[building["corner_index"]] or normalized_name(building["owner"])
-            previous = known_buildings.get(building["corner_index"])
-            known_buildings[building["corner_index"]] = {
+            corner_index = building["corner_index"]
+            owner = building_owners[corner_index] or normalized_name(building["owner"])
+            if building_support[(corner_index, owner)] < 2:
+                continue
+            previous = known_buildings.get(corner_index)
+            if previous and previous["owner"] != owner:
+                continue
+            known_buildings[corner_index] = {
                 **building,
                 "owner": owner,
                 "color": player_colors.get(owner) or building["color"],
                 "kind": "city" if previous and previous["kind"] == "city" else building["kind"],
             }
+
+        pending_roads: dict[int, dict[str, Any]] = {}
+        for road in snapshot["roads"]:
+            edge_index = road["edge_index"]
+            owner = road_owners[edge_index] or normalized_name(road["owner"])
+            if edge_index in known_roads or road_support[(edge_index, owner)] < 2:
+                continue
+            pending_roads[edge_index] = {
+                **road,
+                "owner": owner,
+                "color": player_colors.get(owner) or road["color"],
+            }
+
+        while pending_roads:
+            connected_edges = set()
+            for edge_index, road in pending_roads.items():
+                endpoints = set(topology_edges[edge_index])
+                touches_building = any(
+                    building["owner"] == road["owner"]
+                    and building["corner_index"] in endpoints
+                    for building in known_buildings.values()
+                )
+                touches_road = any(
+                    known_road["owner"] == road["owner"]
+                    and endpoints.intersection(topology_edges[known_edge_index])
+                    for known_edge_index, known_road in known_roads.items()
+                )
+                if touches_building or touches_road:
+                    connected_edges.add(edge_index)
+            if not connected_edges:
+                break
+            for edge_index in connected_edges:
+                known_roads[edge_index] = pending_roads.pop(edge_index)
+
         stabilized.append(
             {
                 **snapshot,
