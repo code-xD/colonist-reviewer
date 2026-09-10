@@ -19,9 +19,11 @@ Create the private environment file once:
 cp analyzer/.env.example analyzer/.env
 ```
 
-Then edit `analyzer/.env` and set `OPENAI_API_KEY`. The real `.env` is ignored by Git;
-only the empty example is committed. Existing shell environment variables take
-precedence over values in the file.
+Then edit `analyzer/.env` and set `OPENAI_API_KEY` and `COLONIST_USERNAME`. The
+username makes the review player-specific. If the username is temporarily unreadable,
+the analyzer uses the largest or expanded player container as a lower-confidence cue
+for the local player. The real `.env` is ignored by Git; only the empty example is
+committed. Existing shell environment variables take precedence over values in the file.
 
 The video frames sent for analysis can contain usernames and chat. API requests set
 `store: false`, but you should still review what is visible before processing a file.
@@ -45,7 +47,8 @@ python3 analyzer/analyze_game.py \
 ```
 
 The default model is `gpt-5.6-terra`. Override it with `--model MODEL` or the
-`OPENAI_MODEL` environment variable.
+`OPENAI_MODEL` environment variable. You can override the configured username for one
+run with `--player USERNAME`.
 
 ## Test frame extraction without an API key
 

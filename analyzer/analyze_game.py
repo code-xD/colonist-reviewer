@@ -375,7 +375,7 @@ def call_responses_api(
 
 
 def analyze_frame_batch(
-    frames: list[Frame], *, api_url: str, api_key: str, model: str
+    frames: list[Frame], *, api_url: str, api_key: str, model: str, player: str
 ) -> dict[str, Any]:
     content: list[dict[str, Any]] = [
         {
@@ -385,7 +385,11 @@ def analyze_frame_batch(
                 "Extract only events supported by visible evidence. A screenshot can show "
                 "the state after an action rather than the action itself. Put guesses in "
                 "inference, lower confidence, and use the supplied timestamps. Do not infer "
-                "hidden cards or hidden resources. Duplicate or unclear events may be omitted."
+                "hidden cards or hidden resources. Duplicate or unclear events may be omitted. "
+                f"The reviewed player's username is {player!r}. An exact visible username is "
+                "authoritative. When that label is obscured, the largest or expanded player "
+                "container represents the local reviewed player in this recording; treat that "
+                "layout cue as an inference and do not override a clearly visible different name."
             ),
         }
     ]
@@ -420,7 +424,12 @@ def analyze_frame_batch(
 
 
 def consolidate_report(
-    batch_results: list[dict[str, Any]], *, api_url: str, api_key: str, model: str
+    batch_results: list[dict[str, Any]],
+    *,
+    api_url: str,
+    api_key: str,
+    model: str,
+    player: str,
 ) -> dict[str, Any]:
     content = [
         {
@@ -430,7 +439,9 @@ def consolidate_report(
                 "post-game review. Deduplicate repeated state observations. Keep uncertain "
                 "claims uncertain. Suggestions must be retrospective and cite visible "
                 "evidence; do not invent resource counts, hidden cards, or legal alternatives "
-                "that cannot be supported. If the user's player color is unclear, say so.\n\n"
+                f"that cannot be supported. The reviewed player is {player!r}. Attribute "
+                "player-specific coaching to that username. The largest or expanded player "
+                "container is a fallback local-player cue only when its name is unreadable.\n\n"
                 + json.dumps(batch_results, ensure_ascii=False)
             ),
         }
@@ -462,6 +473,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("-o", "--output", type=Path, default=Path("colonist-review.json"))
     parser.add_argument("--model", default=os.getenv("OPENAI_MODEL", DEFAULT_MODEL))
     parser.add_argument("--api-url", default=os.getenv("OPENAI_API_URL", DEFAULT_API_URL))
+    parser.add_argument(
+        "--player",
+        default=os.getenv("COLONIST_USERNAME", ""),
+        help="username to assess (or set COLONIST_USERNAME in analyzer/.env)",
+    )
     parser.add_argument("--sample-every", type=float, default=4.0, metavar="SECONDS")
     parser.add_argument("--max-frames", type=int, default=96)
     parser.add_argument("--batch-size", type=int, default=6)
@@ -517,6 +533,8 @@ def main() -> None:
 
     if not args.extract_only and not os.getenv("OPENAI_API_KEY"):
         fail("set OPENAI_API_KEY, or use --extract-only to test frame selection")
+    if not args.extract_only and not args.player.strip():
+        fail("set COLONIST_USERNAME in analyzer/.env or pass --player")
 
     with tempfile.TemporaryDirectory(prefix="colonist-review-") as temporary:
         temporary_path = Path(temporary)
@@ -574,6 +592,7 @@ def main() -> None:
                     api_url=args.api_url,
                     api_key=api_key,
                     model=args.model,
+                    player=args.player,
                 )
             )
 
@@ -583,12 +602,14 @@ def main() -> None:
             api_url=args.api_url,
             api_key=api_key,
             model=args.model,
+            player=args.player,
         )
         output = {
             "schema_version": "1.0",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source_videos": [str(video.resolve()) for video in args.videos],
             "model": args.model,
+            "reviewed_player": args.player,
             "sample_every_seconds": args.sample_every,
             "sampled_frame_count": len(all_frames),
             "analyzed_frame_count": len(selected),
