@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Colonist Review Recorder</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">LOCAL-ONLY CAPTURE</div>
+      <h1>Colonist Review</h1>
+      <p class="description">
+        Record the visible game tab, then review your choices after the match.
+      </p>
+
+      <div id="status" class="status idle" role="status" aria-live="polite">
+        <span class="dot"></span>
+        <span id="status-text">Ready to record</span>
+      </div>
+
+      <div class="actions">
+        <button id="start" class="primary">Start recording</button>
+        <button id="stop" class="secondary" disabled>Stop &amp; save</button>
+      </div>
+
+      <p id="message" class="message" aria-live="polite"></p>
+
+      <div class="privacy">
+        <strong>Passive by design</strong>
+        <span>No page scripts, network reading, hidden information, or move advice.</span>
+      </div>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

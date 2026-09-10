@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Colonist Review Recorder",
+  "version": "1.0.0",
+  "description": "A passive, local-only tab recorder for reviewing your Colonist.io games after play.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "activeTab",
+    "offscreen",
+    "tabCapture"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Colonist Review Recorder",
+    "default_popup": "popup.html"
+  }
+}
