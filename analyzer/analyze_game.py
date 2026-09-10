@@ -141,6 +141,32 @@ class Frame:
     change_score: float
 
 
+def load_dotenv(path: Path) -> None:
+    """Load simple KEY=VALUE pairs without overriding the process environment."""
+    if not path.is_file():
+        return
+
+    for line_number, raw_line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        if "=" not in line:
+            fail(f"invalid .env entry on line {line_number}: expected KEY=VALUE")
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            fail(f"invalid .env variable name on line {line_number}")
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
 def fail(message: str) -> None:
     print(f"error: {message}", file=sys.stderr)
     raise SystemExit(2)
@@ -484,6 +510,7 @@ def copy_selected_frames(frames: list[Frame], destination: Path) -> list[dict[st
 
 
 def main() -> None:
+    load_dotenv(Path(__file__).with_name(".env"))
     args = parse_args()
     validate_args(args)
     find_binary("ffmpeg")

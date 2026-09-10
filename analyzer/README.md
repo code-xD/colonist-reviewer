@@ -8,10 +8,20 @@ not part of the browser extension and does nothing while a match is running.
 
 - Python 3.10+
 - Dependencies: `python3 -m pip install -r analyzer/requirements.txt`
+- An OpenAI API key in `analyzer/.env` or the `OPENAI_API_KEY` environment variable
 
 `imageio-ffmpeg` supplies a private FFmpeg binary, so a system-wide FFmpeg install is
 optional. If a working system binary is present, the script uses it.
-- An OpenAI API key in `OPENAI_API_KEY`
+
+Create the private environment file once:
+
+```sh
+cp analyzer/.env.example analyzer/.env
+```
+
+Then edit `analyzer/.env` and set `OPENAI_API_KEY`. The real `.env` is ignored by Git;
+only the empty example is committed. Existing shell environment variables take
+precedence over values in the file.
 
 The video frames sent for analysis can contain usernames and chat. API requests set
 `store: false`, but you should still review what is visible before processing a file.
@@ -21,7 +31,6 @@ The video frames sent for analysis can contain usernames and chat. API requests 
 For a single recording:
 
 ```sh
-export OPENAI_API_KEY="your-key"
 python3 analyzer/analyze_game.py ~/Downloads/colonist-review-...-part-01.webm \
   --output ~/Downloads/colonist-review.json
 ```
