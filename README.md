@@ -55,3 +55,10 @@ node --check extension/popup.js
 The standalone [WebM analyzer](analyzer/README.md) can turn completed recordings into
 a structured JSON timeline and retrospective suggestions. It is separate from the
 extension and runs only when you invoke it after a match.
+
+## Replay and coaching UI
+
+The [frontend](frontend/README.md) is a local-first replay workspace for this
+repository's analyzer JSON. It presents timestamped observations, decision
+assessments, suggested alternatives, and visual board snapshots when the report
+contains them. The report is read inside the browser and is not uploaded.

@@ -70,15 +70,87 @@ EVENT_SCHEMA: dict[str, Any] = {
     ],
 }
 
+VISIBLE_PLAYER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "username": {"type": "string"},
+        "color": {"type": "string"},
+        "public_points": {"type": ["integer", "null"]},
+        "resource_count": {"type": ["integer", "null"]},
+    },
+    "required": ["username", "color", "public_points", "resource_count"],
+}
+
+VISIBLE_TILE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "x": {"type": "number", "minimum": 0, "maximum": 1},
+        "y": {"type": "number", "minimum": 0, "maximum": 1},
+        "resource": {"type": "string"},
+        "dice_number": {"type": ["integer", "null"]},
+    },
+    "required": ["x", "y", "resource", "dice_number"],
+}
+
+VISIBLE_BUILDING_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "x": {"type": "number", "minimum": 0, "maximum": 1},
+        "y": {"type": "number", "minimum": 0, "maximum": 1},
+        "owner": {"type": "string"},
+        "color": {"type": "string"},
+        "kind": {"type": "string", "enum": ["settlement", "city"]},
+    },
+    "required": ["x", "y", "owner", "color", "kind"],
+}
+
+VISIBLE_ROAD_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "start_x": {"type": "number", "minimum": 0, "maximum": 1},
+        "start_y": {"type": "number", "minimum": 0, "maximum": 1},
+        "end_x": {"type": "number", "minimum": 0, "maximum": 1},
+        "end_y": {"type": "number", "minimum": 0, "maximum": 1},
+        "owner": {"type": "string"},
+        "color": {"type": "string"},
+    },
+    "required": ["start_x", "start_y", "end_x", "end_y", "owner", "color"],
+}
+
+BOARD_SNAPSHOT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "timestamp_seconds": {"type": "number", "minimum": 0},
+        "active_player": {"type": "string"},
+        "players": {"type": "array", "items": VISIBLE_PLAYER_SCHEMA},
+        "tiles": {"type": "array", "items": VISIBLE_TILE_SCHEMA},
+        "buildings": {"type": "array", "items": VISIBLE_BUILDING_SCHEMA},
+        "roads": {"type": "array", "items": VISIBLE_ROAD_SCHEMA},
+        "robber_x": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "robber_y": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    },
+    "required": [
+        "timestamp_seconds", "active_player", "players", "tiles", "buildings",
+        "roads", "robber_x", "robber_y", "confidence",
+    ],
+}
+
 BATCH_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
         "events": {"type": "array", "items": EVENT_SCHEMA},
+        "board_snapshots": {"type": "array", "items": BOARD_SNAPSHOT_SCHEMA},
         "visible_state": {"type": "string"},
         "uncertainties": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["events", "visible_state", "uncertainties"],
+    "required": ["events", "board_snapshots", "visible_state", "uncertainties"],
 }
 
 DECISION_SCHEMA: dict[str, Any] = {
@@ -390,6 +462,11 @@ def analyze_frame_batch(
                 "authoritative. When that label is obscured, the largest or expanded player "
                 "container represents the local reviewed player in this recording; treat that "
                 "layout cue as an inference and do not override a clearly visible different name."
+                " For each supplied frame, add one board snapshot when the game board is visible. "
+                "Use x/y values relative to the board area: 0,0 is its top-left and 1,1 is its "
+                "bottom-right. Record all clearly visible tiles and pieces in that frame, not only "
+                "the new move. Road endpoints and settlement centers must share the same coordinate "
+                "system. Leave arrays empty and lower confidence when the board is obscured."
             ),
         }
     ]
@@ -605,7 +682,7 @@ def main() -> None:
             player=args.player,
         )
         output = {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source_videos": [str(video.resolve()) for video in args.videos],
             "model": args.model,
@@ -613,6 +690,14 @@ def main() -> None:
             "sample_every_seconds": args.sample_every,
             "sampled_frame_count": len(all_frames),
             "analyzed_frame_count": len(selected),
+            "board_snapshots": sorted(
+                [
+                    snapshot
+                    for batch in batch_results
+                    for snapshot in batch.get("board_snapshots", [])
+                ],
+                key=lambda snapshot: snapshot["timestamp_seconds"],
+            ),
             "review": report,
         }
         write_json(args.output, output)
