@@ -619,6 +619,62 @@ def stabilize_snapshots(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]
     return stabilized
 
 
+def encode_board_replay(snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+    if not snapshots:
+        return {"topology": "hex19-row-major-v1", "initial": None, "events": []}
+
+    initial = snapshots[0]
+    previous = initial
+    events: list[dict[str, Any]] = []
+    for snapshot in snapshots[1:]:
+        event: dict[str, Any] = {
+            "timestamp_seconds": snapshot["timestamp_seconds"],
+            "confidence": snapshot["confidence"],
+        }
+        if snapshot["active_player"] != previous["active_player"]:
+            event["active_player"] = snapshot["active_player"]
+
+        previous_players = {player["username"]: player for player in previous["players"]}
+        player_updates = [
+            player
+            for player in snapshot["players"]
+            if previous_players.get(player["username"]) != player
+        ]
+        if player_updates:
+            event["player_updates"] = player_updates
+
+        previous_roads = {road["edge_index"]: road for road in previous["roads"]}
+        roads_added = [
+            road for road in snapshot["roads"] if previous_roads.get(road["edge_index"]) != road
+        ]
+        if roads_added:
+            event["roads_added"] = roads_added
+
+        previous_buildings = {
+            building["corner_index"]: building for building in previous["buildings"]
+        }
+        buildings_changed = [
+            building
+            for building in snapshot["buildings"]
+            if previous_buildings.get(building["corner_index"]) != building
+        ]
+        if buildings_changed:
+            event["buildings_changed"] = buildings_changed
+
+        if snapshot["robber_tile_index"] != previous["robber_tile_index"]:
+            event["robber_tile_index"] = snapshot["robber_tile_index"]
+
+        if len(event) > 2:
+            events.append(event)
+        previous = snapshot
+
+    return {
+        "topology": "hex19-row-major-v1",
+        "initial": initial,
+        "events": events,
+    }
+
+
 def batched(items: list[Frame], size: int) -> Iterable[list[Frame]]:
     for index in range(0, len(items), size):
         yield items[index : index + size]
@@ -922,8 +978,20 @@ def main() -> None:
             model=args.model,
             player=args.player,
         )
+        snapshots = stabilize_snapshots(
+            list(
+                filter(
+                    None,
+                    (
+                        canonicalize_snapshot(snapshot)
+                        for batch in batch_results
+                        for snapshot in batch.get("board_snapshots", [])
+                    ),
+                )
+            )
+        )
         output = {
-            "schema_version": "1.2",
+            "schema_version": "1.3",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source_videos": [str(video.resolve()) for video in args.videos],
             "model": args.model,
@@ -931,17 +999,7 @@ def main() -> None:
             "sample_every_seconds": args.sample_every,
             "sampled_frame_count": len(all_frames),
             "analyzed_frame_count": len(selected),
-            "board_topology": "hex19-row-major-v1",
-            "board_snapshots": stabilize_snapshots(
-                list(filter(
-                    None,
-                    (
-                        canonicalize_snapshot(snapshot)
-                        for batch in batch_results
-                        for snapshot in batch.get("board_snapshots", [])
-                    ),
-                )),
-            ),
+            "board_replay": encode_board_replay(snapshots),
             "review": report,
         }
         write_json(args.output, output)

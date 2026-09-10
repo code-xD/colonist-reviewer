@@ -71,7 +71,8 @@ analysis cannot perfectly reconstruct quick trades or hidden information, so the
 includes confidence scores and limitations. Treat coaching as retrospective guidance,
 not as an authoritative game log.
 
-Schema `1.2` stores complete board observations using `hex19-row-major-v1`: tiles are
-indexed `0–18` across rows of `3–4–5–4–3`, settlements and cities use one of 54 corner
-indices, roads use one of 72 edge indices, and the robber references a tile index. The
-analyzer snaps visual detections to this topology before writing the report.
+Schema `1.3` stores one initial `hex19-row-major-v1` map followed by state-change
+events. Tiles are indexed `0–18` across rows of `3–4–5–4–3`, settlements and cities
+use one of 54 corner indices, roads use one of 72 edge indices, and the robber
+references a tile index. The frontend reconstructs each reviewed position from the
+initial map and subsequent events.

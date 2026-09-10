@@ -43,6 +43,21 @@ export type VisualSnapshot = {
   confidence: number;
 };
 
+type BoardEvent = {
+  timestamp_seconds: number;
+  confidence: number;
+  active_player?: string;
+  player_updates?: VisualPlayer[];
+  roads_added?: VisualRoad[];
+  buildings_changed?: VisualBuilding[];
+  robber_tile_index?: number | null;
+};
+
+type BoardReplay = {
+  initial?: VisualSnapshot | null;
+  events?: BoardEvent[];
+};
+
 export type AnalyzerReview = {
   reviewedPlayer?: string;
   moments: ReviewMoment[];
@@ -120,6 +135,32 @@ function stabilizeSnapshots(input: VisualSnapshot[]) {
   });
 }
 
+function reconstructSnapshots(replay: BoardReplay | undefined) {
+  if (!replay?.initial) return [];
+  let state: VisualSnapshot = structuredClone(replay.initial);
+  const snapshots = [state];
+  for (const event of replay.events ?? []) {
+    const players = new Map(state.players.map((player) => [player.username, player]));
+    const roads = new Map(state.roads.map((road) => [road.edge_index, road]));
+    const buildings = new Map(state.buildings.map((building) => [building.corner_index, building]));
+    for (const player of event.player_updates ?? []) players.set(player.username, player);
+    for (const road of event.roads_added ?? []) roads.set(road.edge_index, road);
+    for (const building of event.buildings_changed ?? []) buildings.set(building.corner_index, building);
+    state = {
+      ...state,
+      timestamp_seconds: event.timestamp_seconds,
+      confidence: event.confidence,
+      active_player: event.active_player ?? state.active_player,
+      players: [...players.values()],
+      roads: [...roads.values()],
+      buildings: [...buildings.values()],
+      robber_tile_index: Object.hasOwn(event, "robber_tile_index") ? event.robber_tile_index ?? null : state.robber_tile_index,
+    };
+    snapshots.push(state);
+  }
+  return snapshots;
+}
+
 export function parseAnalyzer(input: unknown): AnalyzerReview {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("Analyzer JSON must be an object.");
@@ -128,7 +169,9 @@ export function parseAnalyzer(input: unknown): AnalyzerReview {
   const review = (root.review ?? root.analysis ?? root) as Record<string, unknown>;
   const timeline = Array.isArray(review.timeline) ? review.timeline : [];
   const decisions = Array.isArray(review.key_decisions) ? review.key_decisions : [];
-  const snapshots = stabilizeSnapshots(Array.isArray(root.board_snapshots) ? root.board_snapshots as VisualSnapshot[] : []);
+  const snapshots = root.board_replay && typeof root.board_replay === "object"
+    ? reconstructSnapshots(root.board_replay as BoardReplay)
+    : stabilizeSnapshots(Array.isArray(root.board_snapshots) ? root.board_snapshots as VisualSnapshot[] : []);
   const moments: ReviewMoment[] = timeline.map((item) => {
     const value = item as Record<string, unknown>;
     const time = numberValue(value.timestamp_seconds ?? value.time_seconds ?? value.time, -1);
