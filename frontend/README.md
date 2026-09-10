@@ -12,6 +12,9 @@ npm run dev
 
 Open `http://localhost:3000`, then load the JSON produced by the WebM analyzer.
 
+The public frontend is deployed from this folder to
+`https://code-xd.github.io/colonist-reviewer/` by the repository's Pages workflow.
+
 Use the arrow buttons, the timeline slider, or the left and right keyboard arrows
 to move through the replay. Uploaded data stays in the browser tab.
 
