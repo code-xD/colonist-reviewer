@@ -2,6 +2,9 @@
 *.webm
 __pycache__/
 .venv/
+.env
+.env.*
+!.env.example
 *.pyc
 extracted-frames/
 colonist-review.json
