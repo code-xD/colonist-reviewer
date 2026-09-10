@@ -15,8 +15,10 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -485,6 +487,138 @@ def canonicalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def stabilize_snapshots(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    snapshots = sorted(snapshots, key=lambda snapshot: snapshot["timestamp_seconds"])
+
+    def most_common(values: Iterable[Any]) -> Any:
+        counts = Counter(values)
+        return counts.most_common(1)[0][0] if counts else None
+
+    name_counts = Counter(
+        player["username"] for snapshot in snapshots for player in snapshot["players"]
+    )
+    raw_player_colors = {
+        username: most_common(
+            player["color"]
+            for snapshot in snapshots
+            for player in snapshot["players"]
+            if player["username"] == username
+        )
+        for username in name_counts
+    }
+    name_aliases: dict[str, str] = {}
+    canonical_names: list[str] = []
+    for username, _ in name_counts.most_common():
+        match = next(
+            (
+                canonical
+                for canonical in canonical_names
+                if raw_player_colors[canonical] == raw_player_colors[username]
+                and SequenceMatcher(None, canonical.lower(), username.lower()).ratio() >= 0.82
+            ),
+            None,
+        )
+        name_aliases[username] = match or username
+        if not match:
+            canonical_names.append(username)
+
+    def normalized_name(username: str) -> str:
+        return name_aliases.get(username, username)
+
+    tile_resources = {
+        index: most_common(
+            tile["resource"]
+            for snapshot in snapshots
+            for tile in snapshot["tiles"]
+            if tile["tile_index"] == index
+        )
+        for index in range(19)
+    }
+    tile_numbers = {
+        index: most_common(
+            tile["dice_number"]
+            for snapshot in snapshots
+            for tile in snapshot["tiles"]
+            if tile["tile_index"] == index
+        )
+        for index in range(19)
+    }
+    usernames = set(name_aliases.values())
+    player_colors = {
+        username: most_common(
+            player["color"]
+            for snapshot in snapshots
+            for player in snapshot["players"]
+            if normalized_name(player["username"]) == username
+        )
+        for username in usernames
+    }
+    road_owners = {
+        index: most_common(
+            normalized_name(road["owner"])
+            for snapshot in snapshots
+            for road in snapshot["roads"]
+            if road["edge_index"] == index
+        )
+        for index in range(72)
+    }
+    building_owners = {
+        index: most_common(
+            normalized_name(building["owner"])
+            for snapshot in snapshots
+            for building in snapshot["buildings"]
+            if building["corner_index"] == index
+        )
+        for index in range(54)
+    }
+
+    known_roads: dict[int, dict[str, Any]] = {}
+    known_buildings: dict[int, dict[str, Any]] = {}
+    stabilized: list[dict[str, Any]] = []
+    for snapshot in snapshots:
+        for road in snapshot["roads"]:
+            owner = road_owners[road["edge_index"]] or normalized_name(road["owner"])
+            known_roads[road["edge_index"]] = {
+                **road,
+                "owner": owner,
+                "color": player_colors.get(owner) or road["color"],
+            }
+        for building in snapshot["buildings"]:
+            owner = building_owners[building["corner_index"]] or normalized_name(building["owner"])
+            previous = known_buildings.get(building["corner_index"])
+            known_buildings[building["corner_index"]] = {
+                **building,
+                "owner": owner,
+                "color": player_colors.get(owner) or building["color"],
+                "kind": "city" if previous and previous["kind"] == "city" else building["kind"],
+            }
+        stabilized.append(
+            {
+                **snapshot,
+                "active_player": normalized_name(snapshot["active_player"]),
+                "players": [
+                    {
+                        **player,
+                        "username": normalized_name(player["username"]),
+                        "color": player_colors.get(normalized_name(player["username"])) or player["color"],
+                    }
+                    for player in snapshot["players"]
+                ],
+                "tiles": [
+                    {
+                        **tile,
+                        "resource": tile_resources[tile["tile_index"]],
+                        "dice_number": tile_numbers[tile["tile_index"]],
+                    }
+                    for tile in snapshot["tiles"]
+                ],
+                "roads": list(known_roads.values()),
+                "buildings": list(known_buildings.values()),
+            }
+        )
+    return stabilized
+
+
 def batched(items: list[Frame], size: int) -> Iterable[list[Frame]]:
     for index in range(0, len(items), size):
         yield items[index : index + size]
@@ -798,16 +932,15 @@ def main() -> None:
             "sampled_frame_count": len(all_frames),
             "analyzed_frame_count": len(selected),
             "board_topology": "hex19-row-major-v1",
-            "board_snapshots": sorted(
-                filter(
+            "board_snapshots": stabilize_snapshots(
+                list(filter(
                     None,
                     (
                         canonicalize_snapshot(snapshot)
                         for batch in batch_results
                         for snapshot in batch.get("board_snapshots", [])
                     ),
-                ),
-                key=lambda snapshot: snapshot["timestamp_seconds"],
+                )),
             ),
             "review": report,
         }

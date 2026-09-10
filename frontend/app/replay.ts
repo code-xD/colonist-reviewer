@@ -59,6 +59,67 @@ const humanize = (value: unknown) => {
   return text ? text[0].toUpperCase() + text.slice(1) : "Game event";
 };
 
+const mode = <T,>(values: T[]) => {
+  const counts = new Map<T, number>();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+};
+
+function stabilizeSnapshots(input: VisualSnapshot[]) {
+  const snapshots = [...input].sort((a, b) => a.timestamp_seconds - b.timestamp_seconds);
+  const tileResources = new Map<number, string>();
+  const tileNumbers = new Map<number, number | null>();
+  const playerColors = new Map<string, string>();
+  const roadOwners = new Map<number, string>();
+  const buildingOwners = new Map<number, string>();
+
+  for (let index = 0; index < 19; index += 1) {
+    const tiles = snapshots.flatMap((snapshot) => snapshot.tiles.filter((tile) => tile.tile_index === index));
+    const resource = mode(tiles.map((tile) => tile.resource));
+    const diceNumber = mode(tiles.map((tile) => tile.dice_number));
+    if (resource !== undefined) tileResources.set(index, resource);
+    if (diceNumber !== undefined) tileNumbers.set(index, diceNumber);
+  }
+  for (const username of new Set(snapshots.flatMap((snapshot) => snapshot.players.map((player) => player.username)))) {
+    const color = mode(snapshots.flatMap((snapshot) => snapshot.players.filter((player) => player.username === username).map((player) => player.color)));
+    if (color) playerColors.set(username, color);
+  }
+  for (let index = 0; index < 72; index += 1) {
+    const owner = mode(snapshots.flatMap((snapshot) => snapshot.roads.filter((road) => road.edge_index === index).map((road) => road.owner)));
+    if (owner) roadOwners.set(index, owner);
+  }
+  for (let index = 0; index < 54; index += 1) {
+    const owner = mode(snapshots.flatMap((snapshot) => snapshot.buildings.filter((building) => building.corner_index === index).map((building) => building.owner)));
+    if (owner) buildingOwners.set(index, owner);
+  }
+
+  const roads = new Map<number, VisualRoad>();
+  const buildings = new Map<number, VisualBuilding>();
+  return snapshots.map((snapshot) => {
+    for (const road of snapshot.roads) {
+      const owner = roadOwners.get(road.edge_index) ?? road.owner;
+      roads.set(road.edge_index, { ...road, owner, color: playerColors.get(owner) ?? road.color });
+    }
+    for (const building of snapshot.buildings) {
+      const owner = buildingOwners.get(building.corner_index) ?? building.owner;
+      const previous = buildings.get(building.corner_index);
+      buildings.set(building.corner_index, {
+        ...building,
+        owner,
+        color: playerColors.get(owner) ?? building.color,
+        kind: previous?.kind === "city" ? "city" : building.kind,
+      });
+    }
+    return {
+      ...snapshot,
+      players: snapshot.players.map((player) => ({ ...player, color: playerColors.get(player.username) ?? player.color })),
+      tiles: snapshot.tiles.map((tile) => ({ ...tile, resource: tileResources.get(tile.tile_index) ?? tile.resource, dice_number: tileNumbers.has(tile.tile_index) ? tileNumbers.get(tile.tile_index)! : tile.dice_number })),
+      roads: [...roads.values()],
+      buildings: [...buildings.values()],
+    };
+  });
+}
+
 export function parseAnalyzer(input: unknown): AnalyzerReview {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("Analyzer JSON must be an object.");
@@ -67,7 +128,7 @@ export function parseAnalyzer(input: unknown): AnalyzerReview {
   const review = (root.review ?? root.analysis ?? root) as Record<string, unknown>;
   const timeline = Array.isArray(review.timeline) ? review.timeline : [];
   const decisions = Array.isArray(review.key_decisions) ? review.key_decisions : [];
-  const snapshots = Array.isArray(root.board_snapshots) ? root.board_snapshots as VisualSnapshot[] : [];
+  const snapshots = stabilizeSnapshots(Array.isArray(root.board_snapshots) ? root.board_snapshots as VisualSnapshot[] : []);
   const moments: ReviewMoment[] = timeline.map((item) => {
     const value = item as Record<string, unknown>;
     const time = numberValue(value.timestamp_seconds ?? value.time_seconds ?? value.time, -1);

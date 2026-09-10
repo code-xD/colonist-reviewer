@@ -4,7 +4,7 @@ import { defineConfig } from "vite";
 export default defineConfig({
   base: "/colonist-reviewer/",
   plugins: [react()],
-  root: "pages",
+  root: "static-app",
   build: {
     outDir: "../pages-dist",
     emptyOutDir: true,
